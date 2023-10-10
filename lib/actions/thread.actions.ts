@@ -2,6 +2,7 @@
 import { revalidatePath } from "next/cache";
 import Thread from "../models/thread.model";
 import User from "../models/user.model";
+import Community from "../models/community.model";
 import { connectToDB } from "../mongoose";
 
 interface Props {
@@ -14,16 +15,29 @@ interface Props {
 export async function createThread({ text, author, communityId, path }: Props) {
   try {
     await connectToDB();
+
+    const communityIdObject = await Community.findOne(
+      { id: communityId },
+      { _id: 1 }
+    );
+
     const createdThread = await Thread.create({
       text,
       author,
-      community: null,
+      community: communityIdObject,
     });
 
     //update User model
     await User.findByIdAndUpdate(author, {
       $push: { threads: createdThread._id },
     });
+
+    if (communityIdObject) {
+      // Update Community model
+      await Community.findByIdAndUpdate(communityIdObject, {
+        $push: { threads: createdThread._id },
+      });
+    }
 
     revalidatePath(path);
   } catch (error: any) {
@@ -46,6 +60,10 @@ export async function fetchPosts(pageNumber = 1, pageSize = 20) {
       .skip(skipAmount)
       .limit(pageSize)
       .populate({ path: "author", model: User })
+      .populate({
+        path: "community",
+        model: Community,
+      })
       .populate({
         path: "children",
         populate: {
@@ -76,6 +94,11 @@ export async function fetchThreadById(id: string) {
       .populate({
         path: "author",
         model: "User",
+        select: "_id id name image",
+      })
+      .populate({
+        path: "community",
+        model: Community,
         select: "_id id name image",
       })
       .populate({
@@ -115,13 +138,13 @@ export async function addCommentToThread(
 
     //find original thread by its ID
     const originalThread = await Thread.findById(threadId);
-    if(!originalThread) throw new Error('Thread not found');
+    if (!originalThread) throw new Error("Thread not found");
 
     //create a new thread with the comment text
     const commentThread = new Thread({
       text: commentText,
       author: userId,
-      parentId: threadId
+      parentId: threadId,
     });
 
     //save the new thread
